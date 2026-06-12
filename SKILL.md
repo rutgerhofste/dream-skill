@@ -154,6 +154,14 @@ For each hit, read only the surrounding lines (`grep -n ... | head`). Extract: t
 its date (from the transcript mtime / session date - **convert all relative dates to
 absolute**), its likely `type`, and whether it contradicts existing memory.
 
+> **Secret / PII guard (do this as you extract).** Transcripts routinely contain
+> credentials and personal data. **Never ingest a secret as a fact.** If a candidate
+> fact's *value* is a secret (API key, token, private key, password, connection string)
+> or third-party PII, do not store the value. Store a redacted pointer instead - e.g.
+> "the user's deploy token lives in `~/.config/...`/1Password", never the token itself.
+> The user's *own* identity contact info may be stored in a `user` memory if relevant;
+> third-party PII should be avoided. The Phase 5 gate is the hard backstop.
+
 ### Pass B - reinforcement signal (the hard, honest part)
 
 There is **no reliable "this memory was recalled" signal.** Claude Code's recall does not
@@ -287,7 +295,24 @@ cp -r "<memory_dir>" "$WORK"
 Apply all drafted changes (new files, reinforcements, supersede notes, link weaving,
 proposed merges, the rebuilt `MEMORY.md` index) to the **copy**.
 
-### 5b. Show the diff and classify every change
+### 5b. Secret & PII gate (hard stop, runs before anything is shown or applied)
+
+Scan the work copy for credentials and personal data **before** the diff:
+
+```bash
+python3 ~/.claude/skills/dream/secret_scan.py "$WORK"   # exit 1 = blocking secret found
+```
+
+- Any `secret`-severity finding is **blocking, even headless.** Do not write that memory.
+  Remove the secret value from the draft (replace with a redacted pointer) or drop the
+  memory entirely, then re-scan. Never copy the raw secret into `.dream-pending-review.md`
+  either - reference it by location, not value.
+- `pii`-severity findings are surfaced in the review for a human call (the user's own
+  identity info can be legitimate; third-party PII usually is not).
+- This gate is the backstop for the Phase 2 guard: if a secret slipped through extraction,
+  it dies here rather than landing in durable memory.
+
+### 5c. Show the diff and classify every change
 
 Produce a review that buckets changes by reversibility:
 
@@ -304,7 +329,7 @@ diff -ru "<memory_dir>" "$WORK"
 Print a summary: facts added, memories reinforced, superseded (with validity notes),
 links woven, decay-candidates proposed, junk/dead-links queued - each with its bucket.
 
-### 5c. Apply
+### 5d. Apply
 
 - **Interactive session:** present the diff. Apply non-destructive changes; for each
   lossy change, get explicit approval before applying. Decay is lossy but **never
@@ -313,7 +338,7 @@ links woven, decay-candidates proposed, junk/dead-links queued - each with its b
   Write the lossy proposals to `<memory_dir>/.dream-pending-review.md` so the next
   interactive session can approve or reject them. Never hard-delete unattended.
 
-### 5d. Clean up - leave no temp artifacts
+### 5e. Clean up - leave no temp artifacts
 
 ```bash
 date +%s > "<memory_dir>/.last-dream"      # reset the 24h trigger clock
@@ -335,6 +360,12 @@ Verify nothing was left in `/tmp` and no backup/scratch dir remains in the memor
 - **Supersede, don't silently discard.** Outdated facts get a validity note pointing to
   what replaced them (invalidate-not-discard) before any removal is even considered.
 - **Never read binaries into context.** Tag-and-queue by extension only.
+- **Never persist a secret.** Credentials, tokens, private keys, passwords, and
+  credential-bearing connection strings must never become memory. The Phase 2 guard skips
+  them at extraction; the Phase 5 `secret_scan.py` gate is the blocking backstop (it fails
+  even headless). Store a redacted pointer to where a secret lives, never the value.
+- **Be conservative with PII.** The user's own identity info can live in a `user` memory
+  when relevant; third-party personal data should be left out and is flagged for review.
 - **No hardcoded paths, no repo-specific assumptions, no runtime deps** beyond bash +
   `python3` stdlib. Dates are passed in (`--now`) so a resume is deterministic.
 - **First run on a store:** do a dry run (Phases 1-4 + the Phase 5 diff) and confirm with

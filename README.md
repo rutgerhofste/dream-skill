@@ -114,6 +114,30 @@ honest about that:
 
 ---
 
+## Security: secrets and PII
+
+Memory consolidation reads session transcripts, and transcripts routinely contain
+**credentials and personal data**. Memory files are plaintext and long-lived, so a careless
+consolidation - especially an unattended one - could silently persist a leaked API key or
+someone's personal data into `~/.claude/.../memory/`. Dream defends against this in layers:
+
+- **Phase 2 guard.** Secrets are never *ingested* as candidate facts. If a fact's value is
+  a credential, dream stores a redacted pointer to where it lives, never the value.
+- **Phase 5 gate (`secret_scan.py`).** Before anything is written, the work copy is scanned
+  for API keys, tokens, private keys, passwords, and credential-bearing connection strings.
+  A hit is **blocking even in headless runs** - the secret never lands in memory, not even
+  in the pending-review file. PII (e.g. third-party emails) is surfaced for a human call;
+  your *own* identity info can legitimately live in a `user` memory.
+- **Repo backstop.** This repository ships a [gitleaks](.github/workflows/gitleaks.yml)
+  workflow (secret scanning on every push/PR) and a `.gitignore` that keeps `.env`, keys,
+  and dream's runtime state files out of version control. CI also runs the
+  `secret_scan.py` self-check and the deterministic helper selftests.
+
+`secret_scan.py` is a regex/heuristic guard, not a guarantee - treat it as defence in depth,
+keep real secrets in a secret manager, and never commit your memory directory.
+
+---
+
 ## Install
 
 ### Option 1 - clone into your skills directory
@@ -131,8 +155,8 @@ bash /tmp/dream-skill/install.sh --auto
 
 ### Option 3 - manual
 
-1. Copy `SKILL.md`, `retention.py`, `backlinks.py`, `should-dream.sh`, and
-   `dream-hook.sh` to `~/.claude/skills/dream/`.
+1. Copy `SKILL.md`, `retention.py`, `backlinks.py`, `secret_scan.py`,
+   `should-dream.sh`, and `dream-hook.sh` to `~/.claude/skills/dream/`.
 2. `chmod +x ~/.claude/skills/dream/*.sh ~/.claude/skills/dream/retention.py`
 3. Start a session and run `/dream`.
 
@@ -154,6 +178,7 @@ apply only non-destructive changes and queue anything lossy for your review.
 | `SKILL.md` | The five-phase sleep cycle - the skill prompt |
 | `retention.py` | Pure stdlib scorer for the retention score `S(c)` (resume-safe, `--now` passed in) |
 | `backlinks.py` | Read-only stdlib reader for the `[[links]]` graph: backlinks, orphans, broken links, connectivity |
+| `secret_scan.py` | Stdlib secret/PII guard: blocks credentials and personal data from being persisted into memory |
 | `DESIGN.md` | The retention formula, importance definition, reinforcement assumptions, and research mapping |
 | `should-dream.sh` | 24-hour condition checker for the Stop hook |
 | `dream-hook.sh` | Stop hook that triggers a background consolidation when due |

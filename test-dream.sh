@@ -82,6 +82,13 @@ JSON
         "backlinks.py reports no orphans and no broken links"
     rm -rf "$g"
 
+    # secret_scan.py: delegate to its own deterministic self-check.
+    chk "python3 '$SCRIPT_DIR/secret_scan.py' --selftest >/dev/null 2>&1" \
+        "secret_scan.py self-check passes"
+    # And confirm it actually blocks a (synthetic) leaked key end-to-end.
+    chk "! printf 'token ghp_%s\n' \"\$(printf 'a%.0s' {1..36})\" | python3 '$SCRIPT_DIR/secret_scan.py' --stdin >/dev/null 2>&1" \
+        "secret_scan.py blocks a leaked credential (exit 1)"
+
     echo ""
     echo "  helper selftest: ${passed}/${total} passed"
     [[ $passed -eq $total ]] || exit 1

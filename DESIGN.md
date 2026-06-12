@@ -260,7 +260,42 @@ linked-notes design this follows.
 
 ---
 
-## 6. Parameter reference
+## 6. Secrets and PII handling
+
+Consolidation is an *information-flow* risk: it moves content from ephemeral transcripts
+into durable, plaintext, potentially-version-controlled memory. The threat model is
+specifically that a credential or third-party PII the user pasted into a session becomes a
+long-lived memory file - worst case written by an *unattended* auto-dream nobody reviewed.
+
+The guard ([`secret_scan.py`](secret_scan.py)) is heuristic and layered, not a single
+gate:
+
+1. **Detect, don't trust the model to remember the rule.** A deterministic regex scanner
+   covers the high-confidence shapes - AWS/GitHub/Slack/Google keys, `sk-` style keys,
+   private-key blocks, JWTs, `Authorization: Bearer` headers, credential-bearing DB URLs,
+   and `password=/secret=/api_key=` assignments (placeholder values like `<your-key>` are
+   ignored). PII coverage is deliberately narrow (emails, Luhn-valid card numbers) to keep
+   false positives low.
+2. **Two choke points.** Phase 2 refuses to *ingest* a secret as a candidate fact; Phase 5
+   *re-scans the work copy* and blocks the write. Defence in depth: a secret has to evade
+   both an LLM judgement and a deterministic scan to reach disk.
+3. **Blocking even headless.** Lossy *decay* is deferred to human review when unattended,
+   but a detected secret is the opposite - it is removed/redacted immediately and never
+   queued verbatim. The asymmetry is intentional: forgetting can wait for a human;
+   leaking cannot.
+4. **Severity split.** `secret` fails closed (exit 1). `pii` warns, because the user's own
+   identity info is legitimate memory while third-party PII usually is not - that call
+   needs a human, so it is surfaced rather than auto-decided.
+
+Limits, stated honestly: regexes miss novel/obfuscated secret formats and cannot
+understand semantics (a sensitive business fact that is not credential-shaped will pass).
+So the guard is paired with repo-level controls (gitleaks in CI, a `.gitignore` that
+excludes `.env`/keys/runtime state) and the standing advice to keep real secrets in a
+secret manager and never commit the memory directory.
+
+---
+
+## 7. Parameter reference
 
 | Parameter | Where | Default | Effect of increasing |
 |-----------|-------|---------|----------------------|
