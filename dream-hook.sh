@@ -10,9 +10,14 @@
 #     }]
 #   }
 #
-# Fires when a Claude Code session ends. Checks if 24hrs + 5 sessions
-# have passed since last dream. If so, spawns claude in the background
-# to run /dream. Zero overhead when conditions aren't met (~10ms check).
+# Fires when a Claude Code session ends. Checks if 24hrs have passed since
+# the last dream. If so, spawns claude in the background to run /dream.
+# Zero overhead when conditions aren't met (~10ms check).
+#
+# Headless safety: an unattended run has no human to approve lossy changes,
+# so the skill (Phase 5) applies only non-destructive changes and queues any
+# lossy proposals (deletes, merges, trims) to <memory_dir>/.dream-pending-review.md
+# for the next interactive session. Nothing is hard-deleted unattended.
 
 SKILL_DIR="$HOME/.claude/skills/dream"
 
@@ -20,7 +25,7 @@ SKILL_DIR="$HOME/.claude/skills/dream"
 if bash "$SKILL_DIR/should-dream.sh" 2>/dev/null; then
     # Conditions met - spawn dream in background
     # Use claude -p to run the dream skill non-interactively
-    nohup claude -p "Run the dream memory consolidation skill. Read ~/.claude/skills/dream/SKILL.md and execute all 4 phases for all projects." \
+    nohup claude -p "Run the dream memory consolidation skill. Read ~/.claude/skills/dream/SKILL.md and execute all five sleep phases for each project's memory store. This is an unattended run: apply only non-destructive changes and queue any lossy proposals to .dream-pending-review.md for review. Do not hard-delete anything." \
         --allowedTools "Read,Write,Edit,Bash,Glob,Grep" \
         > /tmp/dream-$(date +%Y%m%d-%H%M%S).log 2>&1 &
 

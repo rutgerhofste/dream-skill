@@ -29,9 +29,12 @@ install_skill() {
     info "Installing dream skill to $SKILL_DIR"
     mkdir -p "$SKILL_DIR"
     cp "$SCRIPT_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
+    cp "$SCRIPT_DIR/retention.py" "$SKILL_DIR/retention.py"
     cp "$SCRIPT_DIR/should-dream.sh" "$SKILL_DIR/should-dream.sh"
     cp "$SCRIPT_DIR/dream-hook.sh" "$SKILL_DIR/dream-hook.sh"
-    chmod +x "$SKILL_DIR/should-dream.sh" "$SKILL_DIR/dream-hook.sh"
+    # Ship DESIGN.md alongside the skill for reference (optional but small).
+    [ -f "$SCRIPT_DIR/DESIGN.md" ] && cp "$SCRIPT_DIR/DESIGN.md" "$SKILL_DIR/DESIGN.md"
+    chmod +x "$SKILL_DIR/should-dream.sh" "$SKILL_DIR/dream-hook.sh" "$SKILL_DIR/retention.py"
     ok "Skill installed. Use /dream in Claude Code to run manually."
 }
 
@@ -42,38 +45,6 @@ install_auto_trigger() {
         echo '{}' > "$SETTINGS_FILE"
     fi
 
-    python3 << 'PYEOF'
-import json, sys
-
-settings_file = sys.argv[1] if len(sys.argv) > 1 else "$HOME/.claude/settings.json"
-
-with open("SETTINGS_FILE_PATH") as f:
-    settings = json.load(f)
-
-if "hooks" not in settings:
-    settings["hooks"] = {}
-
-dream_hook = {
-    "type": "command",
-    "command": "bash ~/.claude/skills/dream/dream-hook.sh"
-}
-
-# Check if hook already exists
-stop_hooks = settings["hooks"].get("Stop", [])
-already_installed = any("dream-hook.sh" in h.get("command", "") for h in stop_hooks)
-
-if not already_installed:
-    stop_hooks.append(dream_hook)
-    settings["hooks"]["Stop"] = stop_hooks
-    with open("SETTINGS_FILE_PATH", "w") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
-    print("Hook added to settings.json")
-else:
-    print("Hook already installed")
-PYEOF
-
-    # Actually run the python with correct path substitution
     python3 -c "
 import json
 
@@ -108,7 +79,7 @@ else:
     echo ""
     info "How it works:"
     info "  1. When you exit a Claude Code session, the Stop hook fires"
-    info "  2. should-dream.sh checks: 24hrs passed? 5+ sessions?"
+    info "  2. should-dream.sh checks: 24hrs passed since the last dream?"
     info "  3. If both true: spawns claude in background to run /dream"
     info "  4. Dream consolidates memory, writes timestamp, resets the 24hr timer"
     info "  5. Zero overhead when conditions aren't met (~10ms check)"
