@@ -19,6 +19,10 @@
 #   - memory store:  ~/.claude/projects/<project>/memory/   (one fact per .md file)
 #   - transcripts:   ~/.claude/projects/<project>/*.jsonl   (DIRECT, no sessions/ subdir)
 
+# This harness builds shell assertions and runs them through `eval` in chk(); several
+# locals are read only inside those eval'd strings, which static analysis cannot see.
+# shellcheck disable=SC2034
+
 set -euo pipefail
 
 TEST_PROJECT="dream-test-project"
@@ -195,7 +199,7 @@ EOF
     printf '\x89PNG\r\n\x1a\n\x00\x00\x00stray-binary-do-not-read' > "$MEMORY_DIR/screenshot.png"
 
     # --- Transcript: 2 days ago - supersedes + new fact + reinforces neverthrow ---
-    local s1="$BASE_DIR/$(d_ago 2)_work.jsonl"
+    local s1; s1="$BASE_DIR/$(d_ago 2)_work.jsonl"
     cat > "$s1" << 'EOF'
 {"type":"human","content":"Let's go with main as the default branch instead of develop. Simplifying git flow."}
 {"type":"assistant","content":"Switching the default branch from develop to main."}
@@ -211,7 +215,7 @@ EOF
     touch_ago "$s1" 2 1400
 
     # --- Transcript: 1 day ago - new fact + identity reinforcement ---
-    local s2="$BASE_DIR/$(d_ago 1)_review.jsonl"
+    local s2; s2="$BASE_DIR/$(d_ago 1)_review.jsonl"
     cat > "$s2" << 'EOF'
 {"type":"human","content":"I review code on my phone during commute, so keep PR descriptions as scannable bullet points, not paragraphs."}
 {"type":"assistant","content":"Will do, Jordan - bullet points and scannable PR descriptions since you review on mobile."}

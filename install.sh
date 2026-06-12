@@ -60,12 +60,23 @@ if 'hooks' not in settings:
     settings['hooks'] = {}
 
 dream_hook = {
-    'type': 'command',
-    'command': 'bash ~/.claude/skills/dream/dream-hook.sh'
+    'matcher': '',
+    'hooks': [
+        {
+            'type': 'command',
+            'command': 'bash ~/.claude/skills/dream/dream-hook.sh'
+        }
+    ]
 }
 
+def has_dream(entry):
+    # Support both the correct nested shape and any legacy bare entry.
+    if 'dream-hook.sh' in entry.get('command', ''):
+        return True
+    return any('dream-hook.sh' in h.get('command', '') for h in entry.get('hooks', []))
+
 stop_hooks = settings['hooks'].get('Stop', [])
-already_installed = any('dream-hook.sh' in h.get('command', '') for h in stop_hooks)
+already_installed = any(has_dream(h) for h in stop_hooks)
 
 if not already_installed:
     stop_hooks.append(dream_hook)
@@ -99,10 +110,15 @@ import json
 with open('$SETTINGS_FILE') as f:
     settings = json.load(f)
 
+def has_dream(entry):
+    if 'dream-hook.sh' in entry.get('command', ''):
+        return True
+    return any('dream-hook.sh' in h.get('command', '') for h in entry.get('hooks', []))
+
 if 'hooks' in settings and 'Stop' in settings['hooks']:
     settings['hooks']['Stop'] = [
         h for h in settings['hooks']['Stop']
-        if 'dream-hook.sh' not in h.get('command', '')
+        if not has_dream(h)
     ]
     if not settings['hooks']['Stop']:
         del settings['hooks']['Stop']

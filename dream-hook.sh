@@ -25,9 +25,10 @@ SKILL_DIR="$HOME/.claude/skills/dream"
 if bash "$SKILL_DIR/should-dream.sh" 2>/dev/null; then
     # Conditions met - spawn dream in background
     # Use claude -p to run the dream skill non-interactively
+    LOG="/tmp/dream-$(date +%Y%m%d-%H%M%S).log"
     nohup claude -p "Run the dream memory consolidation skill. Read ~/.claude/skills/dream/SKILL.md and execute all five sleep phases for each project's memory store. This is an unattended run: apply only non-destructive changes and queue any lossy proposals to .dream-pending-review.md for review. Do not hard-delete anything." \
         --allowedTools "Read,Write,Edit,Bash,Glob,Grep" \
-        > /tmp/dream-$(date +%Y%m%d-%H%M%S).log 2>&1 &
+        > "$LOG" 2>&1 &
 
     echo "Dream consolidation started in background (PID: $!)"
 fi
