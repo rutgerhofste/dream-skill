@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ['*']
+  pull_request:
+    branches: ['*']
+
+jobs:
+  shell:
+    name: Shell lint and syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash syntax check (-n)
+        run: |
+          for f in *.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          # SC1090/SC2086 are acceptable for these small install/hook scripts.
+          shellcheck -e SC1090,SC2086 *.sh
+
+  python:
+    name: Python compile and selftests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Compile all helpers (stdlib only, no deps)
+        run: python3 -m py_compile retention.py backlinks.py secret_scan.py
+
+      - name: Deterministic helper selftest (no Claude run)
+        run: bash test-dream.sh selftest
+
+      - name: Secret/PII scanner self-check
+        run: python3 secret_scan.py --selftest

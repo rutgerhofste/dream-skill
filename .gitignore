@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+
+# Secrets / env - NEVER commit. Memory consolidation can surface credentials;
+# keep anything env-shaped out of version control as a hard backstop.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+secrets.*
+credentials.*
+
+# Dream runtime state (created at use-time in the memory dir; never source)
+.dream-config
+.last-dream
+.dream-pending
+.dream-pending-review.md
+dream-work-*/
+dream-*.log
+
+# Local scratch / memory backups produced while testing
+memory-backup-*/
+*.local
+scratch/

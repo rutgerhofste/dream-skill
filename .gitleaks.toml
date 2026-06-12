@@ -1,0 +1,17 @@
+# gitleaks config for dream-skill.
+# Extends the built-in ruleset; we only add an allowlist for the illustrative,
+# non-secret example strings that appear in docs and the test harness.
+title = "dream-skill gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Docs and fixtures contain non-secret, illustrative example values only"
+regexTarget = "match"
+paths = [
+  '''test-dream\.sh''',   # fake fixture content (placeholder URLs, fake PNG bytes)
+]
+regexes = [
+  '''api\.(old|new)(service|platform)\.io''',  # example API URLs used in docs/tests
+]
