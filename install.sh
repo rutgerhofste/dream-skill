@@ -30,11 +30,13 @@ install_skill() {
     mkdir -p "$SKILL_DIR"
     cp "$SCRIPT_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
     cp "$SCRIPT_DIR/retention.py" "$SKILL_DIR/retention.py"
+    cp "$SCRIPT_DIR/backlinks.py" "$SKILL_DIR/backlinks.py"
     cp "$SCRIPT_DIR/should-dream.sh" "$SKILL_DIR/should-dream.sh"
     cp "$SCRIPT_DIR/dream-hook.sh" "$SKILL_DIR/dream-hook.sh"
     # Ship DESIGN.md alongside the skill for reference (optional but small).
     [ -f "$SCRIPT_DIR/DESIGN.md" ] && cp "$SCRIPT_DIR/DESIGN.md" "$SKILL_DIR/DESIGN.md"
-    chmod +x "$SKILL_DIR/should-dream.sh" "$SKILL_DIR/dream-hook.sh" "$SKILL_DIR/retention.py"
+    chmod +x "$SKILL_DIR/should-dream.sh" "$SKILL_DIR/dream-hook.sh" \
+        "$SKILL_DIR/retention.py" "$SKILL_DIR/backlinks.py"
     ok "Skill installed. Use /dream in Claude Code to run manually."
 }
 

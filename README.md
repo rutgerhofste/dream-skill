@@ -69,6 +69,11 @@ the design is in [DESIGN.md §4](DESIGN.md#4-relationship-to-the-research).)
 - **Zep: A Temporal Knowledge Graph Architecture for Agent Memory** (Rasmussen et al.),
   [arXiv:2501.13956](https://arxiv.org/abs/2501.13956) - **invalidate-not-discard**: mark
   an outdated memory with a validity note instead of hard-deleting it.
+- **A-MEM: Agentic Memory for LLM Agents** (Xu et al.),
+  [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) (NeurIPS 2025) - Zettelkasten-style
+  atomic notes with dynamic, LLM-driven links and *memory evolution* (a new note can
+  update the links of existing ones). This is the model behind treating the `[[links]]`
+  as a first-class graph (`backlinks.py`) and the bidirectional weaving in Phase 4.
 - **ACT-R base-level activation + the Ebbinghaus forgetting curve** - the `exp(-lambda*dt)`
   recency term and the recency+frequency basis of reinforcement. See Honda et al.,
   *Human-Like Remembering and Forgetting in LLM Agents: An ACT-R-Inspired Memory
@@ -126,8 +131,8 @@ bash /tmp/dream-skill/install.sh --auto
 
 ### Option 3 - manual
 
-1. Copy `SKILL.md`, `retention.py`, `should-dream.sh`, and `dream-hook.sh` to
-   `~/.claude/skills/dream/`.
+1. Copy `SKILL.md`, `retention.py`, `backlinks.py`, `should-dream.sh`, and
+   `dream-hook.sh` to `~/.claude/skills/dream/`.
 2. `chmod +x ~/.claude/skills/dream/*.sh ~/.claude/skills/dream/retention.py`
 3. Start a session and run `/dream`.
 
@@ -148,6 +153,7 @@ apply only non-destructive changes and queue anything lossy for your review.
 |------|---------|
 | `SKILL.md` | The five-phase sleep cycle - the skill prompt |
 | `retention.py` | Pure stdlib scorer for the retention score `S(c)` (resume-safe, `--now` passed in) |
+| `backlinks.py` | Read-only stdlib reader for the `[[links]]` graph: backlinks, orphans, broken links, connectivity |
 | `DESIGN.md` | The retention formula, importance definition, reinforcement assumptions, and research mapping |
 | `should-dream.sh` | 24-hour condition checker for the Stop hook |
 | `dream-hook.sh` | Stop hook that triggers a background consolidation when due |

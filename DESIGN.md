@@ -211,7 +211,56 @@ equation (Anderson & Schooler, 1991). We cite those rather than repeat a mislabe
 
 ---
 
-## 5. Parameter reference
+## 5. The backlink graph (A-MEM, kept simple)
+
+The memories already form a graph: each file links to others with `[[name]]` wiki-links.
+We treat that as a first-class structure rather than decoration, but **without adding a
+database** - the store stays plain, git-versioned, human-readable markdown. The reader is
+[`backlinks.py`](backlinks.py); it is read-only and deterministic (scan files, print JSON).
+
+### 5.1 What it computes
+
+For each memory: `outbound` links, `inbound` links (**backlinks**), `broken_outbound`
+(dead `[[targets]]`), an `orphan` flag (no links either way), and a `connectivity` score
+in `[0,1]`:
+
+```
+connectivity = 0.5 * (degree / max_degree) + 0.5 * (pagerank / max_pagerank)
+```
+
+`degree` is in+out link count; `pagerank` is a tiny fixed-iteration PageRank (damping
+0.85, 20 iterations) over the link graph. Half degree, half PageRank keeps it intuitive
+(well-linked = important) while still rewarding being linked *by important memories* -
+the HippoRAG idea, in ~20 lines of stdlib.
+
+### 5.2 How it feeds the rest of the model
+
+- **Phase 1 (orient):** surface `broken_links` (repair targets) and `orphans` (weave
+  candidates) up front.
+- **Phase 3 (importance):** `connectivity` informs the `relevance` component - a memory
+  many others depend on is load-bearing and should resist decay. We feed it *through*
+  the skill's relevance judgement rather than hard-coding a fourth importance term, so
+  `retention.py` stays simple and the weighting stays explainable.
+- **Phase 4 (associate):** the REM step repairs broken links, weaves orphans in
+  **bidirectionally**, and does A-MEM **memory evolution** - a new fact can update the
+  links of an existing memory.
+
+### 5.3 Why not a real database / vector store
+
+At dream's scale (tens to low-hundreds of small facts that Claude loads into context
+anyway) retrieval latency is not the bottleneck - relevance and reasoning are. A vector
+store would add a dependency, lose the git/transparency property, and bring no temporal
+model; a graph database would add schema overhead for multi-hop power we can approximate
+with `[[links]]` + connectivity. Knowledge graphs win decisively on *multi-hop
+aggregation* at scale (e.g. GraphRAG ~73% vs vector ~18% on aggregation queries), but
+that gain is about traversal/computation over large corpora, not lookup speed on a small
+personal store. So we keep the markdown and make its existing graph legible. See
+[A-MEM (arXiv:2502.12110)](https://arxiv.org/abs/2502.12110) for the Zettelkasten-style
+linked-notes design this follows.
+
+---
+
+## 6. Parameter reference
 
 | Parameter | Where | Default | Effect of increasing |
 |-----------|-------|---------|----------------------|

@@ -111,8 +111,17 @@ Work on **one project's memory store at a time**.
 4. Note `metadata.type` for each memory - you will need it in Phase 3 to decide what is
    protected (`user`, core-workflow `feedback`) versus decay-eligible (`project`,
    `reference`).
+5. **Read the link graph.** The `[[links]]` between memories are a lightweight knowledge
+   graph; read it as one with the helper (read-only, no deps):
+   ```bash
+   python3 ~/.claude/skills/dream/backlinks.py "<memory_dir>"
+   ```
+   Note the `broken_links` (dead `[[targets]]` to repair/remove in Phase 3), the `orphans`
+   (memories with no links in or out - candidates for weaving in Phase 4), and each node's
+   `connectivity` score (how load-bearing it is - feeds importance in Phase 3).
 
-Output: a mental map - what exists, what is stray, what the always-loaded cost is.
+Output: a mental map - what exists, what is stray, what the link graph looks like, and
+what the always-loaded cost is.
 
 ---
 
@@ -200,6 +209,8 @@ helper is pure and gets `--now` passed in, so a resume is deterministic:
 # last_access = most recent reinforcement date from Phase 2 (or the file's own date).
 # importance components in [0,1]: novelty (how non-obvious/unique), relevance (how
 # load-bearing for current work), repetition (how often the user has restated it).
+# Let Phase 1 connectivity inform relevance: a memory many others link to is
+# load-bearing, so raise its relevance (A-MEM / HippoRAG - see DESIGN.md).
 python3 ~/.claude/skills/dream/retention.py --now "$(date +%F)" -i /tmp/dream-memories.json
 ```
 
@@ -233,16 +244,31 @@ is lossy at the margins, so it is a Phase 5 proposal, not an automatic write.
 
 ## Phase 4: ASSOCIATE  (REM)
 
-**Goal:** the dreaming pass - form new connections, not new facts.
+**Goal:** the dreaming pass - form new connections, not new facts. This is the
+Zettelkasten/A-MEM step: the value of the store is in its links, not just its notes.
 
-1. **Weave missing `[[links]]`.** For each memory, check whether related memories are
-   linked. Add `[[other-name]]` where a real relationship exists and the link is missing.
-   Verify the target's `name` exists (or is a deliberate forward-link to a planned memory).
-2. **Surface genuine cross-memory insight.** If two memories together imply something
+Re-run the graph helper on the draft (post-3a) state to see what is connected:
+
+```bash
+python3 ~/.claude/skills/dream/backlinks.py "<memory_dir>"   # or the Phase 5 work copy
+```
+
+1. **Repair broken links.** For each entry in `broken_links`, either fix the `[[target]]`
+   to the correct existing `name`, or remove the dead link. (Drafted now, shown in Phase 5.)
+2. **Weave missing `[[links]]`, bidirectionally.** For each `orphan` and each
+   under-connected memory, add `[[other-name]]` where a *real* relationship exists. Make
+   links **two-way**: if A meaningfully links to B, ensure B links back to A (unless the
+   relation is genuinely directional, e.g. "superseded by"). Verify every target's `name`
+   exists (or is a deliberate forward-link to a planned memory).
+3. **Memory evolution (A-MEM).** A new fact from this cycle can change how an *old* memory
+   should read or link. Where a new memory makes an existing one more precise, update the
+   old memory's links (and, lightly, its wording) to reflect the new connection. Keep it
+   conservative - this is re-linking, not rewriting history.
+4. **Surface genuine cross-memory insight.** If two memories together imply something
    neither states alone (e.g. a preference + a decision that jointly define a workflow),
-   draft a short new memory capturing it. **Do not invent.** If nothing genuine emerges,
-   add nothing - an empty REM phase is a valid outcome. Confabulation is the failure mode
-   to avoid here.
+   draft a short new memory capturing it and link it both ways. **Do not invent.** If
+   nothing genuine emerges, add nothing - an empty REM phase is a valid outcome.
+   Confabulation is the failure mode to avoid here.
 
 ---
 
@@ -320,7 +346,8 @@ Verify nothing was left in `/tmp` and no backup/scratch dir remains in the memor
 
 1. `wc -l <memory_dir>/MEMORY.md` - index is lean; every pointer resolves to a real file.
 2. No relative dates remain in any memory file ("yesterday", "last week").
-3. Every `[[link]]` target exists (or is an intentional forward-link).
+3. `backlinks.py <memory_dir>` shows `broken: 0` and fewer orphans than before (every
+   `[[link]]` target exists, save intentional forward-links).
 4. No duplicate memories; superseded facts carry a validity note.
 5. `.last-dream` updated; `/tmp` scratch and any work copy removed; `.dream-pending` gone.
 6. Print the change summary (added / reinforced / superseded / linked / decayed / queued).

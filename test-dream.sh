@@ -69,8 +69,21 @@ JSON
     chk "echo '$out' | python3 -c 'import json,sys; a=json.load(sys.stdin); sys.exit(0 if a[0][\"name\"]==\"stale-reference\" else 1)'" \
         "output sorted weakest-first"
 
+    # backlinks.py on a tiny two-node graph: a -> b. b has a backlink; both connected.
+    local g
+    g=$(mktemp -d)
+    printf -- '---\nname: a\n---\nlinks to [[b]].\n' > "$g/a.md"
+    printf -- '---\nname: b\n---\nno outbound links.\n' > "$g/b.md"
+    local bl
+    bl=$(python3 "$SCRIPT_DIR/backlinks.py" "$g")
+    chk "echo '$bl' | python3 -c 'import json,sys; d={n[\"name\"]:n for n in json.load(sys.stdin)[\"nodes\"]}; sys.exit(0 if d[\"b\"][\"inbound\"]==[\"a\"] else 1)'" \
+        "backlinks.py records b's backlink from a"
+    chk "echo '$bl' | python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(0 if r[\"summary\"][\"orphans\"]==0 and r[\"summary\"][\"broken\"]==0 else 1)'" \
+        "backlinks.py reports no orphans and no broken links"
+    rm -rf "$g"
+
     echo ""
-    echo "  retention.py selftest: ${passed}/${total} passed"
+    echo "  helper selftest: ${passed}/${total} passed"
     [[ $passed -eq $total ]] || exit 1
 }
 
@@ -271,6 +284,10 @@ do_verify() {
         "no unresolved relative dates in memory files"
     chk "! ls /tmp/dream-work-* >/dev/null 2>&1 && [[ ! -f /tmp/dream-memories.json ]]" \
         "no temp work artifacts left in /tmp"
+
+    # Link graph: REM phase should leave no broken links and fewer than the 4 seeded orphans.
+    chk "python3 '$SCRIPT_DIR/backlinks.py' '$MEMORY_DIR' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"summary\"]; sys.exit(0 if s[\"broken\"]==0 and s[\"orphans\"]<4 else 1)'" \
+        "link graph healthy after dream (broken=0, orphans reduced)"
 
     # Every index pointer resolves to a real file.
     chk "python3 - '$idx' '$MEMORY_DIR' <<'PY'
