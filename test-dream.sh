@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
 #
-# test-dream.sh - Creates a realistic test environment for the dream skill
+# test-dream.sh - Test harness for the reinforcement-gated dream skill.
 #
 # Usage:
-#   ./test-dream.sh setup     Create test fixtures
-#   ./test-dream.sh verify    Check consolidation results after running /dream
-#   ./test-dream.sh teardown  Remove test fixtures
+#   ./test-dream.sh selftest   Deterministic unit test of retention.py (no LLM needed)
+#   ./test-dream.sh setup      Create a one-fact-per-file fixture store with known issues
+#   ./test-dream.sh verify     Check consolidation results after running /dream
+#   ./test-dream.sh teardown   Remove fixtures
 #
 # Workflow:
-#   1. ./test-dream.sh setup
-#   2. Run /dream in Claude Code (scoped to the test project)
-#   3. ./test-dream.sh verify
-#   4. ./test-dream.sh teardown
+#   1. ./test-dream.sh selftest        # proves the math, always runnable
+#   2. ./test-dream.sh setup           # builds the fixture memory store + transcripts
+#   3. Run /dream in Claude Code, pointed at the dream-test-project store
+#   4. ./test-dream.sh verify
+#   5. ./test-dream.sh teardown
 #
+# Layout matches native Claude Code auto-memory:
+#   - memory store:  ~/.claude/projects/<project>/memory/   (one fact per .md file)
+#   - transcripts:   ~/.claude/projects/<project>/*.jsonl   (DIRECT, no sessions/ subdir)
 
 set -euo pipefail
 
 TEST_PROJECT="dream-test-project"
 BASE_DIR="$HOME/.claude/projects/$TEST_PROJECT"
-SESSIONS_DIR="$BASE_DIR/sessions"
-MEMORY_DIR="$BASE_DIR/memory"
+MEMORY_DIR="$BASE_DIR/memory"          # transcripts live directly in BASE_DIR
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# --- Colors ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -33,341 +37,282 @@ fail() { echo -e "${RED}[FAIL]${NC} $1"; }
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
+# Dates derived relative to "now" so the fixture is always inside the scan window.
+d_ago() { date -v-"$1"d +%Y-%m-%d 2>/dev/null || date -d "$1 days ago" +%Y-%m-%d; }
+touch_ago() { # touch_ago <file> <days> <HHMM>
+    touch -t "$(date -v-"$2"d +%Y%m%d"$3" 2>/dev/null || date -d "$2 days ago" +%Y%m%d"$3")" "$1" 2>/dev/null || true
+}
+
 # ============================================================================
-# SETUP - Create test fixtures
+# SELFTEST - deterministic check of retention.py (no Claude run required)
+# ============================================================================
+do_selftest() {
+    info "Unit-testing retention.py with a fixed fixture..."
+    local out
+    out=$(python3 "$SCRIPT_DIR/retention.py" --now 2026-06-12 <<'JSON'
+[
+  {"name":"user-identity","type":"user","last_access":"2026-01-01","importance":{"novelty":0.1,"relevance":1,"repetition":1}},
+  {"name":"fresh-feedback","type":"feedback","last_access":"2026-06-05","importance":{"novelty":0.4,"relevance":0.9,"repetition":0.7}},
+  {"name":"stale-reference","type":"reference","last_access":"2025-11-01","importance":0.15}
+]
+JSON
+)
+    local total=0 passed=0
+    chk() { total=$((total+1)); if eval "$1"; then pass "$2"; passed=$((passed+1)); else fail "$2"; fi; }
+
+    chk "echo '$out' | python3 -c 'import json,sys; d={m[\"name\"]:m for m in json.load(sys.stdin)}; sys.exit(0 if d[\"user-identity\"][\"tier\"]==\"protected\" and d[\"user-identity\"][\"score\"]==1.0 else 1)'" \
+        "user identity is protected (S=1.0)"
+    chk "echo '$out' | python3 -c 'import json,sys; d={m[\"name\"]:m for m in json.load(sys.stdin)}; sys.exit(0 if d[\"fresh-feedback\"][\"tier\"]==\"keep\" else 1)'" \
+        "fresh, important feedback is kept"
+    chk "echo '$out' | python3 -c 'import json,sys; d={m[\"name\"]:m for m in json.load(sys.stdin)}; sys.exit(0 if d[\"stale-reference\"][\"tier\"]==\"decay-candidate\" else 1)'" \
+        "stale, low-importance reference is a decay candidate"
+    chk "echo '$out' | python3 -c 'import json,sys; a=json.load(sys.stdin); sys.exit(0 if a[0][\"name\"]==\"stale-reference\" else 1)'" \
+        "output sorted weakest-first"
+
+    echo ""
+    echo "  retention.py selftest: ${passed}/${total} passed"
+    [[ $passed -eq $total ]] || exit 1
+}
+
+# ============================================================================
+# SETUP - build a one-fact-per-file fixture store
 # ============================================================================
 do_setup() {
     info "Creating test environment at $BASE_DIR"
-
     if [[ -d "$BASE_DIR" ]]; then
         warn "Test directory already exists. Run '$0 teardown' first."
         exit 1
     fi
+    mkdir -p "$MEMORY_DIR"
 
-    mkdir -p "$SESSIONS_DIR" "$MEMORY_DIR"
-
-    # --- Create initial MEMORY.md with deliberate problems ---
-    cat > "$MEMORY_DIR/MEMORY.md" << 'MEMEOF'
+    # --- MEMORY.md index (with a deliberately dead pointer) ---
+    cat > "$MEMORY_DIR/MEMORY.md" << 'IDXEOF'
 # Memory Index
 
-Last consolidated: 2025-01-15
+- [User identity](user-identity.md) — who the user is
+- [Error handling](prefers-result-types.md) — core workflow: Result types, not try/catch
+- [Default branch](default-branch.md) — git default branch
+- [API base URL](api-base-url.md) — where the API lives
+- [Package manager](package-manager.md) — which package manager to use
+- [Editor habit](stale-sublime.md) — quick-edit editor preference
+- [Old deploy notes](gone.md) — DEAD POINTER: this file does not exist
+IDXEOF
 
-## Topic Files
+    # --- Protected: user identity ---
+    cat > "$MEMORY_DIR/user-identity.md" << 'EOF'
+---
+name: user-identity
+description: The user's name and basic identity
+metadata:
+  type: user
+---
 
-| File | Summary | Updated |
-|------|---------|---------|
-| preferences.md | Code style and tool preferences | 2025-01-15 |
-| decisions.md | Project architecture decisions | 2025-01-10 |
-| nonexistent.md | This file does not actually exist | 2025-01-05 |
+The user's name is Jordan.
+EOF
 
-## Quick Reference
+    # --- Protected: core-workflow feedback ---
+    cat > "$MEMORY_DIR/prefers-result-types.md" << 'EOF'
+---
+name: prefers-result-types
+description: Error-handling convention - Result types via neverthrow
+metadata:
+  type: feedback
+---
 
-- User prefers tabs for indentation
-- Default branch is "develop"
-- API base URL is https://api.oldservice.com/v1
-- Yesterday the user mentioned they like dark themes
-- The project uses React 17
-- Last week we decided to use PostgreSQL
-- User's timezone is PST
-- Always use semicolons in JavaScript
-- The user hates verbose commit messages
-- Keep PRs under 200 lines
-- User prefers vim keybindings
-- Never auto-format on save
-- The deploy target is AWS us-east-1
-- Use yarn, not npm
-- The user's name is probably Alex
-MEMEOF
+Use Result types via neverthrow for error handling, not try/catch. Related: [[package-manager]].
+EOF
 
-    # --- Create existing preferences.md with some stale entries ---
-    cat > "$MEMORY_DIR/preferences.md" << 'PREFEOF'
-# Preferences
+    # --- Decay-eligible project fact, will be SUPERSEDED to main ---
+    cat > "$MEMORY_DIR/default-branch.md" << 'EOF'
+---
+name: default-branch
+description: The git default branch for this project
+metadata:
+  type: project
+---
 
-- [2025-01-10] Prefers tabs for indentation (source: session, confidence: high)
-- [2025-01-08] Always use semicolons in JavaScript (source: session, confidence: high)
-- [2025-01-05] Use yarn for package management, not npm (source: session, confidence: high)
-- [2025-01-03] Prefers dark theme in editor (source: inference, confidence: medium)
-- [2024-06-15] Likes to use Sublime Text for quick edits (source: session, confidence: medium)
-PREFEOF
+The default branch is develop.
+EOF
 
-    # --- Create existing decisions.md ---
-    cat > "$MEMORY_DIR/decisions.md" << 'DECEOF'
-# Decisions
+    # --- Decay-eligible project fact, will be SUPERSEDED to new URL ---
+    cat > "$MEMORY_DIR/api-base-url.md" << 'EOF'
+---
+name: api-base-url
+description: Base URL of the API
+metadata:
+  type: project
+---
 
-- [2025-01-10] Using PostgreSQL for the database (source: session, confidence: high)
-- [2025-01-08] Default branch is "develop" (source: session, confidence: high)
-- [2025-01-05] Deploy target is AWS us-east-1 (source: session, confidence: high)
-- [2025-01-03] API hosted at https://api.oldservice.com/v1 (source: session, confidence: high)
-DECEOF
+The API base URL is https://api.oldservice.com/v1.
+EOF
 
-    # --- Session 1: 3 days ago - User corrects indentation preference ---
-    local session1_date
-    session1_date=$(date -v-3d +%Y-%m-%d 2>/dev/null || date -d "3 days ago" +%Y-%m-%d)
-    local session1_file="$SESSIONS_DIR/${session1_date}_session1.jsonl"
+    # --- Feedback fact, will be SUPERSEDED yarn -> pnpm ---
+    cat > "$MEMORY_DIR/package-manager.md" << 'EOF'
+---
+name: package-manager
+description: Which package manager to use
+metadata:
+  type: feedback
+---
 
-    cat > "$session1_file" << SESS1EOF
-{"type":"human","content":"Can you fix the indentation in src/app.ts?"}
-{"type":"assistant","content":"Sure, I'll fix the indentation. I'll use tabs as per your preference."}
-{"type":"human","content":"No, actually use spaces. 2 spaces. I switched from tabs a while ago, stop doing tabs."}
-{"type":"assistant","content":"Got it! I'll use 2 spaces for indentation from now on. Updating the file now."}
-{"type":"human","content":"Also, I prefer prettier for formatting. Always run prettier before committing."}
-{"type":"assistant","content":"Understood. I'll make sure to run prettier before any commits."}
-{"type":"human","content":"And my name is Jordan, not Alex. Not sure where that came from."}
-{"type":"assistant","content":"Apologies Jordan! I'll remember that correctly going forward."}
-SESS1EOF
-    # Set the modification time to 3 days ago
-    touch -t "$(date -v-3d +%Y%m%d1200 2>/dev/null || date -d '3 days ago' +%Y%m%d1200)" "$session1_file" 2>/dev/null || true
+Use yarn for package management.
+EOF
 
-    # --- Session 2: 2 days ago - Architecture decision change ---
-    local session2_date
-    session2_date=$(date -v-2d +%Y-%m-%d 2>/dev/null || date -d "2 days ago" +%Y-%m-%d)
-    local session2_file="$SESSIONS_DIR/${session2_date}_session2.jsonl"
+    # --- Stale reference, never reinforced -> should decay ---
+    cat > "$MEMORY_DIR/stale-sublime.md" << 'EOF'
+---
+name: stale-sublime
+description: Quick-edit editor preference
+metadata:
+  type: reference
+---
 
-    cat > "$session2_file" << SESS2EOF
-{"type":"human","content":"We're moving the API to the new domain. The base URL is now https://api.newplatform.io/v2"}
-{"type":"assistant","content":"I'll update all references to use the new API base URL: https://api.newplatform.io/v2"}
-{"type":"human","content":"Also, I decided we're switching from PostgreSQL to SQLite for the local dev environment. Keep Postgres for production though."}
-{"type":"assistant","content":"Makes sense. SQLite for local development, PostgreSQL for production. I'll update the config accordingly."}
-{"type":"human","content":"Let's go with main as the default branch instead of develop. We're simplifying the git flow."}
-{"type":"assistant","content":"Switching default branch from develop to main. I'll update the branch references."}
-{"type":"human","content":"From now on, always include a test plan in PR descriptions. Every single PR, no exceptions."}
-{"type":"assistant","content":"Understood. Every PR description will include a test plan section going forward."}
-SESS2EOF
-    touch -t "$(date -v-2d +%Y%m%d1400 2>/dev/null || date -d '2 days ago' +%Y%m%d1400)" "$session2_file" 2>/dev/null || true
+Likes Sublime Text for quick file edits.
+EOF
+    touch_ago "$MEMORY_DIR/stale-sublime.md" 220 1200
 
-    # --- Session 3: 1 day ago - Recurring patterns and preferences ---
-    local session3_date
-    session3_date=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d "1 day ago" +%Y-%m-%d)
-    local session3_file="$SESSIONS_DIR/${session3_date}_session3.jsonl"
+    # --- Stray binary junk that drifted into the store (must NEVER be read) ---
+    printf '\x89PNG\r\n\x1a\n\x00\x00\x00stray-binary-do-not-read' > "$MEMORY_DIR/screenshot.png"
 
-    cat > "$session3_file" << SESS3EOF
-{"type":"human","content":"Again, can you make sure the error handling follows our pattern? Every time I have to remind you."}
-{"type":"assistant","content":"Sorry about that. I'll follow the try/catch with custom error types pattern consistently. Could you confirm the pattern you want?"}
-{"type":"human","content":"Use Result types, not try/catch. We use neverthrow. I keep forgetting to mention this at the start."}
-{"type":"assistant","content":"Got it - Result types via neverthrow, not try/catch. I'll apply this pattern consistently."}
-{"type":"human","content":"I prefer short commit messages. One line, under 50 chars. The body can have detail but the subject must be tight."}
-{"type":"assistant","content":"Understood. Short subject lines under 50 characters, details in the commit body when needed."}
-{"type":"human","content":"Oh and we're using pnpm now, not yarn. Switched last month."}
-{"type":"assistant","content":"Updated - pnpm instead of yarn for package management."}
-{"type":"human","content":"Remember that I'm usually reviewing code on my phone during commute, so keep PR descriptions scannable. Bullet points, not paragraphs."}
-{"type":"assistant","content":"Will do - bullet points and scannable formatting in PR descriptions since you review on mobile."}
-SESS3EOF
-    touch -t "$(date -v-1d +%Y%m%d1600 2>/dev/null || date -d '1 day ago' +%Y%m%d1600)" "$session3_file" 2>/dev/null || true
+    # --- Transcript: 2 days ago - supersedes + new fact + reinforces neverthrow ---
+    local s1="$BASE_DIR/$(d_ago 2)_work.jsonl"
+    cat > "$s1" << 'EOF'
+{"type":"human","content":"Let's go with main as the default branch instead of develop. Simplifying git flow."}
+{"type":"assistant","content":"Switching the default branch from develop to main."}
+{"type":"human","content":"The API moved. Base URL is now https://api.newplatform.io/v2."}
+{"type":"assistant","content":"Updating references to https://api.newplatform.io/v2."}
+{"type":"human","content":"We're on pnpm now, not yarn. Switched last month."}
+{"type":"assistant","content":"Got it - pnpm instead of yarn."}
+{"type":"human","content":"Make sure error handling still uses neverthrow Result types in the new module."}
+{"type":"assistant","content":"Yes - neverthrow Result types throughout the new module, no try/catch."}
+{"type":"human","content":"From now on, always include a test plan in PR descriptions. Every PR."}
+{"type":"assistant","content":"Understood - every PR description gets a test plan section."}
+EOF
+    touch_ago "$s1" 2 1400
 
-    # --- Session 4: Old session (should be outside 7-day window but include anyway) ---
-    local session4_file="$SESSIONS_DIR/2024-08-10_old_session.jsonl"
-    cat > "$session4_file" << SESS4EOF
-{"type":"human","content":"I like using Sublime Text for quick file edits"}
-{"type":"assistant","content":"Noted, I'll keep that in mind."}
-SESS4EOF
-    touch -t "202408101200" "$session4_file" 2>/dev/null || true
+    # --- Transcript: 1 day ago - new fact + identity reinforcement ---
+    local s2="$BASE_DIR/$(d_ago 1)_review.jsonl"
+    cat > "$s2" << 'EOF'
+{"type":"human","content":"I review code on my phone during commute, so keep PR descriptions as scannable bullet points, not paragraphs."}
+{"type":"assistant","content":"Will do, Jordan - bullet points and scannable PR descriptions since you review on mobile."}
+EOF
+    touch_ago "$s2" 1 1600
 
     echo ""
-    info "Test environment created successfully!"
-    echo ""
-    echo "Directory structure:"
-    find "$BASE_DIR" -type f | sort | while read -r f; do
-        echo "  $f"
-    done
-    echo ""
-    echo "=== KNOWN ISSUES THE DREAM SKILL SHOULD FIX ==="
-    echo ""
-    echo "  1. MEMORY.md references nonexistent.md (does not exist)"
-    echo "  2. MEMORY.md has relative dates ('Yesterday', 'Last week')"
-    echo "  3. MEMORY.md exceeds ideal Quick Reference size (15 items, should be <=10)"
-    echo "  4. preferences.md says 'tabs' but session corrected to '2 spaces'"
-    echo "  5. preferences.md says 'yarn' but session corrected to 'pnpm'"
-    echo "  6. decisions.md says branch is 'develop' but session changed to 'main'"
-    echo "  7. decisions.md has old API URL, session provides new one"
-    echo "  8. MEMORY.md says user's name is 'probably Alex' but it's Jordan"
-    echo "  9. New preference: prettier before commits (not in memory yet)"
-    echo "  10. New preference: Result types / neverthrow (not in memory yet)"
-    echo "  11. New preference: short commit messages under 50 chars (not in memory yet)"
-    echo "  12. New preference: test plan required in every PR (not in memory yet)"
-    echo "  13. New preference: PR descriptions should be bullet points (mobile review)"
-    echo "  14. New pattern: user keeps forgetting to mention neverthrow (recurring)"
-    echo ""
-    echo "=== NEXT STEPS ==="
-    echo ""
-    echo "  1. Open Claude Code"
-    echo "  2. Run: /dream --project $TEST_PROJECT"
-    echo "     (or invoke the dream skill and point it at $BASE_DIR)"
-    echo "  3. After it completes, run: $0 verify"
-    echo ""
+    info "Fixture created. Structure:"
+    find "$BASE_DIR" -type f | sort | sed 's/^/  /'
+    cat << EOF
+
+=== WHAT A CORRECT DREAM RUN SHOULD DO ===
+  Non-destructive (safe even headless):
+   - Supersede default-branch (develop -> main) with a validity note, keep history
+   - Supersede api-base-url (oldservice -> newplatform.io/v2) with a validity note
+   - Supersede package-manager (yarn -> pnpm) with a validity note
+   - Reinforce prefers-result-types (neverthrow mentioned) - reset its clock, keep it
+   - Add new memory: test plan required in every PR description
+   - Add new memory: PR descriptions as scannable bullet points (mobile review)
+   - Remove the dead 'gone.md' pointer from MEMORY.md (target does not exist)
+   - Weave [[links]] where related
+   - Keep user-identity (Jordan) and prefers-result-types untouched (protected)
+  Lossy (proposed only; queued to .dream-pending-review.md if headless):
+   - stale-sublime is a decay candidate (never reinforced, ~220 days old)
+   - screenshot.png is stray junk - QUEUE for removal, NEVER read it into context
+
+=== NEXT STEPS ===
+  1. Run /dream in Claude Code against project '$TEST_PROJECT'
+  2. ./test-dream.sh verify
+EOF
 }
 
 # ============================================================================
-# VERIFY - Check consolidation results
+# VERIFY - check results (tolerant of the non-destructive / queued model)
 # ============================================================================
 do_verify() {
-    if [[ ! -d "$BASE_DIR" ]]; then
-        fail "Test directory does not exist. Run '$0 setup' first."
-        exit 1
-    fi
+    [[ -d "$BASE_DIR" ]] || { fail "Test dir missing. Run '$0 setup' first."; exit 1; }
 
-    echo ""
-    info "Verifying dream consolidation results..."
-    echo ""
+    echo ""; info "Verifying dream consolidation results..."; echo ""
+    local total=0 passed=0
+    chk() { total=$((total+1)); if eval "$1"; then pass "$2"; passed=$((passed+1)); else fail "$2"; fi; }
 
-    local total=0
-    local passed=0
+    local idx="$MEMORY_DIR/MEMORY.md"
+    local all; all=$(cat "$MEMORY_DIR"/*.md 2>/dev/null || echo "")
+    local pending="$MEMORY_DIR/.dream-pending-review.md"
+    local pending_txt; pending_txt=$(cat "$pending" 2>/dev/null || echo "")
 
-    run_check() {
-        total=$((total + 1))
-        if eval "$1"; then
-            pass "$2"
-            passed=$((passed + 1))
-        else
-            fail "$2"
-        fi
-    }
+    chk "[[ -f '$idx' ]]" "MEMORY.md index exists"
+    chk "! grep -q 'gone.md' '$idx' 2>/dev/null" "Dead pointer 'gone.md' removed from index"
 
-    # --- MEMORY.md checks ---
-    local memfile="$MEMORY_DIR/MEMORY.md"
+    # Supersede via invalidate-not-discard: new value present AND history kept.
+    chk "grep -qi 'main' '$MEMORY_DIR/default-branch.md' 2>/dev/null" "default-branch updated to main"
+    chk "grep -qiE 'supersed|previously|develop' '$MEMORY_DIR/default-branch.md' 2>/dev/null" \
+        "default-branch keeps a validity note (history not hard-discarded)"
+    chk "echo \"\$all\" | grep -qi 'newplatform.io'" "API URL updated to newplatform.io"
+    chk "echo \"\$all\" | grep -qi 'pnpm'" "package manager updated to pnpm"
 
-    run_check "[[ -f '$memfile' ]]" \
-        "MEMORY.md exists"
+    # Reinforcement / protection
+    chk "[[ -f '$MEMORY_DIR/prefers-result-types.md' ]] && grep -qi 'neverthrow' '$MEMORY_DIR/prefers-result-types.md'" \
+        "core-workflow feedback (neverthrow) retained"
+    chk "echo \"\$all\" | grep -qi 'jordan'" "user identity (Jordan) retained"
 
-    run_check "[[ \$(wc -l < '$memfile') -le 200 ]]" \
-        "MEMORY.md is under 200 lines ($(wc -l < "$memfile" 2>/dev/null || echo '?') lines)"
+    # New facts captured
+    chk "echo \"\$all\" | grep -qiE 'test plan'" "new fact captured: test plan in PR descriptions"
+    chk "echo \"\$all\" | grep -qiE 'bullet|scannable|mobile|phone'" "new fact captured: bullet-point PR descriptions"
 
-    run_check "! grep -qi 'nonexistent.md' '$memfile' 2>/dev/null" \
-        "Stale reference to nonexistent.md removed"
+    # Decay is lossy but never silent: the candidate must be queued for review OR removed.
+    chk "echo \"\$pending_txt\" | grep -qi 'sublime' || [[ ! -f '$MEMORY_DIR/stale-sublime.md' ]]" \
+        "stale-sublime decay surfaced (queued for review or removed - not silently)"
 
-    run_check "! grep -qi 'yesterday' '$memfile' 2>/dev/null" \
-        "No relative date 'yesterday' in MEMORY.md"
+    # Stray binary: never hard-deleted unattended; either still present or explicitly queued.
+    chk "[[ -f '$MEMORY_DIR/screenshot.png' ]] || echo \"\$pending_txt\" | grep -qi 'screenshot.png'" \
+        "stray binary not silently deleted (present or queued for review)"
 
-    run_check "! grep -qi 'last week' '$memfile' 2>/dev/null" \
-        "No relative date 'last week' in MEMORY.md"
+    # Hygiene
+    chk "! grep -riE '(yesterday|last week|last month|tomorrow|today)' '$MEMORY_DIR'/*.md 2>/dev/null | grep -viE 'supersed|previously|was changed' >/dev/null" \
+        "no unresolved relative dates in memory files"
+    chk "! ls /tmp/dream-work-* >/dev/null 2>&1 && [[ ! -f /tmp/dream-memories.json ]]" \
+        "no temp work artifacts left in /tmp"
 
-    run_check "! grep -qi 'probably Alex' '$memfile' 2>/dev/null" \
-        "Incorrect name 'probably Alex' removed from MEMORY.md"
+    # Every index pointer resolves to a real file.
+    chk "python3 - '$idx' '$MEMORY_DIR' <<'PY'
+import re,sys,os
+idx,mem=sys.argv[1],sys.argv[2]
+links=re.findall(r'\]\(([^)]+\.md)\)', open(idx).read())
+missing=[l for l in links if not os.path.exists(os.path.join(mem, os.path.basename(l)))]
+sys.exit(1 if missing else 0)
+PY" "every MEMORY.md pointer resolves to a real file"
 
-    # --- Contradiction resolution ---
-    local preffile="$MEMORY_DIR/preferences.md"
-
-    if [[ -f "$preffile" ]]; then
-        run_check "grep -qi 'spaces\|2.space' '$preffile' 2>/dev/null" \
-            "Indentation updated to spaces in preferences"
-
-        run_check "! grep -qE '(^|\s)tabs' '$preffile' 2>/dev/null || grep -qi 'previously.*tabs' '$preffile' 2>/dev/null" \
-            "Old 'tabs' preference removed or marked as superseded"
-
-        run_check "grep -qi 'pnpm' '$preffile' 2>/dev/null" \
-            "Package manager updated to pnpm"
-
-        run_check "grep -qi 'prettier' '$preffile' 2>/dev/null" \
-            "Prettier preference added"
-
-        run_check "grep -qi 'neverthrow\|result.type' '$preffile' 2>/dev/null" \
-            "neverthrow / Result types preference added"
-    else
-        fail "preferences.md not found"
-        total=$((total + 5))
-    fi
-
-    # --- Decision updates ---
-    local decfile="$MEMORY_DIR/decisions.md"
-
-    if [[ -f "$decfile" ]]; then
-        run_check "grep -qi 'main' '$decfile' 2>/dev/null" \
-            "Default branch updated to 'main'"
-
-        run_check "grep -qi 'newplatform' '$decfile' 2>/dev/null" \
-            "API URL updated to newplatform.io"
-
-        run_check "grep -qi 'sqlite\|SQLite' '$decfile' 2>/dev/null" \
-            "SQLite for dev environment noted"
-    else
-        fail "decisions.md not found"
-        total=$((total + 3))
-    fi
-
-    # --- New entries that should have been created ---
-    local all_memory
-    all_memory=$(cat "$MEMORY_DIR"/*.md 2>/dev/null || echo "")
-
-    run_check "echo '$all_memory' | grep -qi 'test.plan\|test plan'" \
-        "Test plan requirement captured somewhere in memory"
-
-    run_check "echo '$all_memory' | grep -qi 'bullet\|scannable\|mobile'" \
-        "PR description format preference captured"
-
-    run_check "echo '$all_memory' | grep -qi 'jordan'" \
-        "User's name (Jordan) captured in memory"
-
-    run_check "echo '$all_memory' | grep -qi 'commit.*50\|50.*char\|short commit'" \
-        "Commit message length preference captured"
-
-    # --- Date format checks ---
-    run_check "! grep -rE '(yesterday|last week|last month|today|tomorrow)' '$MEMORY_DIR'/*.md 2>/dev/null | grep -v 'previously\|was\|changed from\|Updated.*previously' > /dev/null 2>&1" \
-        "No unresolved relative dates in any memory file"
-
-    # --- No duplicates check (basic) ---
-    if [[ -f "$preffile" ]]; then
-        local dup_count
-        dup_count=$(sort "$preffile" | uniq -d | grep -c '.' 2>/dev/null || echo "0")
-        run_check "[[ $dup_count -eq 0 ]]" \
-            "No exact duplicate lines in preferences.md"
-    fi
-
-    # --- Summary ---
     echo ""
     echo "=============================="
     echo -e "  Results: ${passed}/${total} checks passed"
     echo "=============================="
-    echo ""
-
     if [[ $passed -eq $total ]]; then
-        echo -e "${GREEN}All checks passed! Dream consolidation looks correct.${NC}"
+        echo -e "${GREEN}All checks passed.${NC}"
     elif [[ $passed -ge $((total * 3 / 4)) ]]; then
-        echo -e "${YELLOW}Most checks passed. Review the failures above.${NC}"
+        echo -e "${YELLOW}Most checks passed. Review failures above.${NC}"
     else
-        echo -e "${RED}Several checks failed. The dream skill needs work.${NC}"
+        echo -e "${RED}Several checks failed.${NC}"
     fi
-
-    echo ""
-    echo "Manual review recommended. Check these files:"
-    echo "  $MEMORY_DIR/MEMORY.md"
-    find "$MEMORY_DIR" -name "*.md" ! -name "MEMORY.md" | sort | while read -r f; do
-        echo "  $f"
-    done
     echo ""
 }
 
-# ============================================================================
-# TEARDOWN - Clean up test fixtures
-# ============================================================================
 do_teardown() {
-    if [[ ! -d "$BASE_DIR" ]]; then
-        warn "Test directory does not exist. Nothing to clean up."
-        exit 0
-    fi
-
-    info "Removing test environment at $BASE_DIR"
+    if [[ ! -d "$BASE_DIR" ]]; then warn "Nothing to clean up."; exit 0; fi
+    info "Removing $BASE_DIR"
     rm -rf "$BASE_DIR"
     pass "Test environment removed."
 }
 
-# ============================================================================
-# Main
-# ============================================================================
 case "${1:-}" in
-    setup)
-        do_setup
-        ;;
-    verify)
-        do_verify
-        ;;
-    teardown)
-        do_teardown
-        ;;
+    selftest) do_selftest ;;
+    setup)    do_setup ;;
+    verify)   do_verify ;;
+    teardown) do_teardown ;;
     *)
-        echo "Usage: $0 {setup|verify|teardown}"
-        echo ""
-        echo "  setup     - Create test fixtures with known issues"
-        echo "  verify    - Check if dream skill fixed the issues"
-        echo "  teardown  - Remove test fixtures"
+        echo "Usage: $0 {selftest|setup|verify|teardown}"
+        echo "  selftest  - deterministic retention.py unit test (no Claude run needed)"
+        echo "  setup     - create one-fact-per-file fixtures with known issues"
+        echo "  verify    - check whether a /dream run fixed them"
+        echo "  teardown  - remove fixtures"
         exit 1
         ;;
 esac
